@@ -1,0 +1,5 @@
+/target
+/research/vendor
+/corpus-out/
+/.private/
+*.orig

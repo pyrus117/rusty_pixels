@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["crates/rp-core", "crates/rp-io", "crates/rp-ops", "crates/rp-corpus"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pyrus117/rusty_pixels"
+
+[workspace.dependencies]
+rp-core = { path = "crates/rp-core" }
+rp-io = { path = "crates/rp-io" }
+rp-ops = { path = "crates/rp-ops" }
+thiserror = "2.0.21"
+flate2 = "1.1.10"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.152"
+schemars = "1.2.2"
+strum = { version = "0.28.0", features = ["derive"] }
+uuid = { version = "1.28.0", features = ["v4"] }
+png = "0.18.1"
+anyhow = "1.0.104"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"

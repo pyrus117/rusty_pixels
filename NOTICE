@@ -1,0 +1,14 @@
+Rusty Pixels
+Copyright (c) 2026 Rusty Pixels contributors
+Licensed under either of Apache License 2.0 or MIT license, at your option.
+
+Rusty Pixels is an independent project. It is not affiliated with, endorsed by, or derived
+from the source code of Aseprite. "Aseprite" is a trademark of Igara Studio S.A.; it is used
+here only to describe file-format compatibility (.aseprite files).
+
+The .aseprite reader/writer is implemented from the publicly published file-format
+specification (docs/ase-file-specs.md in the Aseprite repository). That document is published
+for interoperability but carries no explicit licence; it is not redistributed here.
+
+Third-party code ported under compatible licences is listed below.
+(none yet)

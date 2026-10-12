@@ -13,4 +13,6 @@ pub enum CoreError {
         width: u32,
         height: u32,
     },
+    #[error("a {width}x{height} image is too large")]
+    TooLarge { width: u32, height: u32 },
 }

@@ -67,8 +67,16 @@ fn gif_frame(image: &RgbaImage) -> Result<gif::Frame<'static>, ExportError> {
             Some(&i) => i,
             None => {
                 if lookup.len() == 255 {
+                    // Force the observed alpha rule before quantising: anything
+                    // above 0 is opaque. Speed 10 keeps big frames to milliseconds;
+                    // the crate's default (1) takes seconds per frame.
                     let mut pixels = image.data().to_vec();
-                    return Ok(gif::Frame::from_rgba(width, height, &mut pixels));
+                    for px in pixels.chunks_exact_mut(4) {
+                        if px[3] != 0 {
+                            px[3] = 255;
+                        }
+                    }
+                    return Ok(gif::Frame::from_rgba_speed(width, height, &mut pixels, 10));
                 }
                 let i = lookup.len() as u8 + 1;
                 lookup.insert(rgb, i);

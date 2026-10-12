@@ -21,7 +21,8 @@ fn expected_json(name: &str) -> Value {
     // Ours, not Aseprite's: app and version. Tag colour is left out in M1.
     v["meta"]["app"] = Value::from(APP);
     v["meta"]["version"] = Value::from(env!("CARGO_PKG_VERSION"));
-    if let Some(tags) = v["meta"]["frameTags"].as_array_mut() {
+    // get_mut, not indexing: IndexMut would insert a "frameTags": null that Aseprite never wrote.
+    if let Some(tags) = v["meta"].get_mut("frameTags").and_then(Value::as_array_mut) {
         for t in tags {
             t.as_object_mut().unwrap().remove("color");
         }

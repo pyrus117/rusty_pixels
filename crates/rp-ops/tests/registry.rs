@@ -67,7 +67,8 @@ fn commands_round_trip_through_json_with_op_tag() {
         add,
         Command::AddLayer(AddLayer {
             name: "ink".into(),
-            above: None
+            above: None,
+            uuid: None
         })
     );
     assert!(serde_json::from_value::<Command>(serde_json::json!({"op": "nope"})).is_err());

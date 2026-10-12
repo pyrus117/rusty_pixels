@@ -1,6 +1,19 @@
-use rp_core::{Cel, Frame, Layer, LayerId, Sprite};
+use rp_core::{Cel, Frame, Layer, LayerId, PaletteEntry, Sprite};
 
 use crate::error::OpError;
+
+/// A piece of sprite state a change reads or writes, for conflict detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Key {
+    LayerOrder,
+    LayerExists(LayerId),
+    LayerProps(LayerId),
+    Cel(LayerId, u32),
+    FrameExists(u32),
+    FrameProps(u32),
+    PaletteLen,
+    PaletteEntry(u32),
+}
 
 /// One undoable edit: the state before and after, plus how to push it either way.
 /// Whole-cel snapshots are M0's granularity; a tile-level patch can join later behind this API.
@@ -27,6 +40,7 @@ pub enum Change {
         after: String,
     },
     FrameAppend {
+        index: u32,
         frame: Frame,
     },
     FrameDuration {
@@ -38,6 +52,10 @@ pub enum Change {
         index: u32,
         before: [u8; 4],
         after: [u8; 4],
+    },
+    PaletteResize {
+        before: Vec<PaletteEntry>,
+        after: Vec<PaletteEntry>,
     },
 }
 
@@ -123,12 +141,16 @@ impl Change {
                 Ok(())
             }
             Change::LayerRename { id, after, .. } => rename(sprite, *id, after),
-            Change::FrameAppend { frame } => {
+            Change::FrameAppend { frame, .. } => {
                 sprite.frames.push(*frame);
                 Ok(())
             }
             Change::FrameDuration { frame, after, .. } => set_duration(sprite, *frame, *after),
             Change::PaletteColor { index, after, .. } => set_rgba(sprite, *index, *after),
+            Change::PaletteResize { after, .. } => {
+                sprite.palette.entries = after.clone();
+                Ok(())
+            }
         }
     }
 
@@ -168,6 +190,57 @@ impl Change {
             },
             Change::FrameDuration { frame, before, .. } => set_duration(sprite, *frame, *before),
             Change::PaletteColor { index, before, .. } => set_rgba(sprite, *index, *before),
+            Change::PaletteResize { before, .. } => {
+                sprite.palette.entries = before.clone();
+                Ok(())
+            }
+        }
+    }
+
+    /// What this change reads and what it writes (plan A1 rule 6).
+    /// A conflict is any other applied change whose reads or writes hit a write here.
+    pub fn keys(&self) -> (Vec<Key>, Vec<Key>) {
+        match self {
+            Change::Cel { layer, frame, .. } => (
+                vec![Key::LayerExists(*layer), Key::FrameExists(*frame)],
+                vec![Key::Cel(*layer, *frame)],
+            ),
+            Change::LayerInsert { layer, .. } => (
+                vec![],
+                vec![
+                    Key::LayerOrder,
+                    Key::LayerExists(layer.id),
+                    Key::LayerProps(layer.id),
+                ],
+            ),
+            Change::LayerRemove { layers, cels, .. } => {
+                let mut writes = vec![Key::LayerOrder];
+                for l in layers {
+                    writes.push(Key::LayerExists(l.id));
+                    writes.push(Key::LayerProps(l.id));
+                }
+                for ((layer, frame), _) in cels {
+                    writes.push(Key::Cel(*layer, *frame));
+                }
+                (vec![], writes)
+            }
+            Change::LayerRename { id, .. } => {
+                (vec![Key::LayerExists(*id)], vec![Key::LayerProps(*id)])
+            }
+            Change::FrameAppend { index, .. } => (vec![], vec![Key::FrameExists(*index)]),
+            Change::FrameDuration { frame, .. } => (
+                vec![Key::FrameExists(*frame)],
+                vec![Key::FrameProps(*frame)],
+            ),
+            Change::PaletteColor { index, .. } => (vec![], vec![Key::PaletteEntry(*index)]),
+            Change::PaletteResize { before, after } => {
+                // Writes the length, and every entry the resize adds or drops.
+                let lo = before.len().min(after.len()) as u32;
+                let hi = before.len().max(after.len()) as u32;
+                let mut writes = vec![Key::PaletteLen];
+                writes.extend((lo..hi).map(Key::PaletteEntry));
+                (vec![], writes)
+            }
         }
     }
 }

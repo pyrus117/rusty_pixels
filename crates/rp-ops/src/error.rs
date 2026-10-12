@@ -29,4 +29,8 @@ pub enum OpError {
     TransactionOpen,
     #[error("no transaction is open")]
     NoTransaction,
+    #[error("conflict: {0}")]
+    Conflict(String),
+    #[error("op {0} is not exposed to agents")]
+    NotAgentExposed(&'static str),
 }

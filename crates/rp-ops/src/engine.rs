@@ -1,23 +1,27 @@
+use std::collections::HashSet;
+
 use rp_core::{
     BlendMode, Cel, CelContent, Frame, HeaderFlags, Image, Layer, LayerFlags, LayerId, LayerKind,
-    Sprite, UserData,
+    PaletteEntry, PixelValue, Sprite, UserData,
 };
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::change::Change;
+use crate::change::{Change, Key};
 use crate::command::{
-    AddFrame, AddLayer, Command, PixelWrite, RemoveLayer, RenameLayer, SetFrameDuration,
-    SetPaletteColor, SetPixels,
+    AddFrame, AddLayer, Command, PixelWrite, RemoveLayer, RenameLayer, ResizePalette,
+    SetFrameDuration, SetPaletteColor, SetPixels,
 };
 use crate::error::OpError;
-use crate::registry::spec;
+use crate::registry::{permitted, spec};
 
 /// Memory cap for one grown cel: width * height * bytes_per_pixel must not
 /// exceed it. Bounds a hostile or accidental allocation independently of the
 /// canvas; 256 MiB leaves room for large but legitimate cels.
 pub const MAX_CEL_BYTES: usize = 256 << 20;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Origin {
     Human,
     Agent { session: String },
@@ -35,23 +39,53 @@ pub struct HistoryEntry {
     pub origin: Origin,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct LogEntry {
-    pub revision: u64,
-    pub origin: Origin,
-    pub command: Command,
+/// One successful engine event. The log is the replay record (plan A1 rule 8):
+/// feeding it back through the same calls rebuilds the same engine state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LogEntry {
+    Apply {
+        revision: u64,
+        origin: Origin,
+        command: Command,
+    },
+    Undo {
+        revision: u64,
+    },
+    Redo {
+        revision: u64,
+    },
+    Begin {
+        origin: Origin,
+        label: String,
+    },
+    Commit {
+        origin: Origin,
+    },
+    Rollback {
+        revision: u64,
+        origin: Origin,
+    },
+}
+
+/// An applied change and its monotonic sequence number. Sequence numbers
+/// decide "made after" for conflict checks; a change keeps its number for life.
+struct AppliedChange {
+    seq: u64,
+    change: Change,
 }
 
 struct UndoEntry {
     label: String,
     origin: Origin,
-    changes: Vec<Change>,
+    changes: Vec<AppliedChange>,
+    /// Set when the entry moves to the redo stack: the change counter then.
+    undone_at: u64,
 }
 
 struct Transaction {
     label: String,
     origin: Origin,
-    changes: Vec<Change>,
+    changes: Vec<AppliedChange>,
 }
 
 pub struct Engine {
@@ -59,10 +93,12 @@ pub struct Engine {
     revision: u64,
     /// None once an existing layer holds the last id; ids are never reused.
     next_layer_id: Option<u32>,
+    /// Changes ever issued; source of the per-change sequence numbers.
+    seq_next: u64,
     undo_stack: Vec<UndoEntry>,
     redo_stack: Vec<UndoEntry>,
     log: Vec<LogEntry>,
-    txn: Option<Transaction>,
+    txns: Vec<Transaction>,
 }
 
 fn history_label(title: &str, origin: &Origin) -> String {
@@ -70,6 +106,58 @@ fn history_label(title: &str, origin: &Origin) -> String {
         Origin::Human => title.to_string(),
         Origin::Agent { .. } => format!("Agent: {title}"),
     }
+}
+
+/// Some key that `writes` and the later change both touch, if any.
+fn conflicting_key(writes: &[Key], later: &Change) -> Option<Key> {
+    let (later_reads, later_writes) = later.keys();
+    writes
+        .iter()
+        .find(|w| later_writes.contains(w) || later_reads.contains(w))
+        .cloned()
+}
+
+/// Revert `changes` newest-first. On a mid-failure, undo the partial work so
+/// the sprite is exactly as before, then return the error (rule 7).
+fn revert_all(sprite: &mut Sprite, changes: &[AppliedChange]) -> Result<(), OpError> {
+    let mut done = 0usize;
+    for ac in changes.iter().rev() {
+        match ac.change.revert(sprite) {
+            Ok(()) => done += 1,
+            Err(err) => {
+                for ac in changes.iter().skip(changes.len() - done) {
+                    if let Err(restore) = ac.change.apply(sprite) {
+                        return Err(OpError::InvalidArgument(format!(
+                            "revert failed ({err}) and the partial rollback did not restore: {restore}"
+                        )));
+                    }
+                }
+                return Err(err);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Apply `changes` in order, undoing the partial work on a mid-failure (rule 7).
+fn apply_all(sprite: &mut Sprite, changes: &[AppliedChange]) -> Result<(), OpError> {
+    let mut done = 0usize;
+    for ac in changes {
+        match ac.change.apply(sprite) {
+            Ok(()) => done += 1,
+            Err(err) => {
+                for ac in changes.iter().take(done).rev() {
+                    if let Err(restore) = ac.change.revert(sprite) {
+                        return Err(OpError::InvalidArgument(format!(
+                            "apply failed ({err}) and the partial rollback did not restore: {restore}"
+                        )));
+                    }
+                }
+                return Err(err);
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Engine {
@@ -84,11 +172,53 @@ impl Engine {
             sprite,
             revision: 0,
             next_layer_id,
+            seq_next: 0,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             log: Vec::new(),
-            txn: None,
+            txns: Vec::new(),
         }
+    }
+
+    /// Re-run a log through the same public calls (rule 8). Errors when a step
+    /// fails or the revision diverges from the one recorded in the log.
+    pub fn replay(initial: Sprite, log: &[LogEntry]) -> Result<Engine, OpError> {
+        let mut e = Engine::new(initial);
+        for entry in log {
+            match entry {
+                LogEntry::Apply {
+                    revision,
+                    origin,
+                    command,
+                } => {
+                    e.apply(command.clone(), origin.clone())?;
+                    e.check_replay_revision(*revision)?;
+                }
+                LogEntry::Undo { revision } => {
+                    if e.undo()?.is_none() {
+                        return Err(OpError::InvalidArgument(
+                            "replay found nothing to undo".to_string(),
+                        ));
+                    }
+                    e.check_replay_revision(*revision)?;
+                }
+                LogEntry::Redo { revision } => {
+                    if e.redo()?.is_none() {
+                        return Err(OpError::InvalidArgument(
+                            "replay found nothing to redo".to_string(),
+                        ));
+                    }
+                    e.check_replay_revision(*revision)?;
+                }
+                LogEntry::Begin { origin, label } => e.begin(label, origin.clone())?,
+                LogEntry::Commit { origin } => e.commit(origin)?,
+                LogEntry::Rollback { revision, origin } => {
+                    e.rollback(origin)?;
+                    e.check_replay_revision(*revision)?;
+                }
+            }
+        }
+        Ok(e)
     }
 
     pub fn sprite(&self) -> &Sprite {
@@ -119,73 +249,100 @@ impl Engine {
         self.apply_inner(cmd, origin)
     }
 
+    /// Open a transaction for `origin`. One open transaction per origin (rule 1).
     pub fn begin(&mut self, label: &str, origin: Origin) -> Result<(), OpError> {
-        if self.txn.is_some() {
+        if self.txns.iter().any(|t| t.origin == origin) {
             return Err(OpError::TransactionOpen);
         }
-        self.txn = Some(Transaction {
+        self.txns.push(Transaction {
             label: label.to_string(),
-            origin,
+            origin: origin.clone(),
             changes: Vec::new(),
+        });
+        self.log.push(LogEntry::Begin {
+            origin,
+            label: label.to_string(),
         });
         Ok(())
     }
 
-    pub fn commit(&mut self) -> Result<(), OpError> {
-        let txn = self.txn.take().ok_or(OpError::NoTransaction)?;
+    /// Push one history entry for the transaction, nothing when it is empty (rule 3).
+    pub fn commit(&mut self, origin: &Origin) -> Result<(), OpError> {
+        let idx = self.txn_index(origin)?;
+        let txn = self.txns.remove(idx);
         if !txn.changes.is_empty() {
             let label = history_label(&txn.label, &txn.origin);
             self.push_history(UndoEntry {
                 label,
                 origin: txn.origin,
                 changes: txn.changes,
+                undone_at: 0,
             });
         }
+        self.log.push(LogEntry::Commit {
+            origin: origin.clone(),
+        });
         Ok(())
     }
 
-    pub fn rollback(&mut self) -> Result<(), OpError> {
-        let txn = self.txn.take().ok_or(OpError::NoTransaction)?;
-        if txn.changes.is_empty() {
-            return Ok(());
+    /// Revert only this origin's changes, newest first. A Conflict leaves the
+    /// transaction open and changes nothing (rule 4).
+    pub fn rollback(&mut self, origin: &Origin) -> Result<(), OpError> {
+        let idx = self.txn_index(origin)?;
+        self.revert_conflict(&self.txns[idx].changes)?;
+        revert_all(&mut self.sprite, &self.txns[idx].changes)?;
+        let txn = self.txns.remove(idx);
+        if !txn.changes.is_empty() {
+            self.revision += 1;
         }
-        for change in txn.changes.iter().rev() {
-            change.revert(&mut self.sprite)?;
-        }
-        self.revision += 1;
+        self.log.push(LogEntry::Rollback {
+            revision: self.revision,
+            origin: origin.clone(),
+        });
         Ok(())
     }
 
-    /// Ok(None) when there is nothing to undo. TransactionOpen while a transaction is open.
+    /// Ok(None) when there is nothing to undo. Allowed while transactions are
+    /// open; a Conflict leaves the entry on the stack (rules 5 and 7).
     pub fn undo(&mut self) -> Result<Option<String>, OpError> {
-        if self.txn.is_some() {
-            return Err(OpError::TransactionOpen);
-        }
-        let Some(entry) = self.undo_stack.pop() else {
+        let Some(entry) = self.undo_stack.last() else {
             return Ok(None);
         };
-        for change in entry.changes.iter().rev() {
-            change.revert(&mut self.sprite)?;
-        }
+        self.revert_conflict(&entry.changes)?;
+        revert_all(&mut self.sprite, &entry.changes)?;
+        // Pop only now: a failure above must leave the stack untouched.
+        let mut entry = self
+            .undo_stack
+            .pop()
+            .ok_or_else(|| OpError::InvalidArgument("undo entry vanished".to_string()))?;
+        entry.undone_at = self.seq_next;
         self.revision += 1;
         let label = entry.label.clone();
         self.redo_stack.push(entry);
+        self.log.push(LogEntry::Undo {
+            revision: self.revision,
+        });
         Ok(Some(label))
     }
 
+    /// Ok(None) when there is nothing to redo. A Conflict changes nothing (rules 5 and 7).
     pub fn redo(&mut self) -> Result<Option<String>, OpError> {
-        if self.txn.is_some() {
-            return Err(OpError::TransactionOpen);
-        }
-        let Some(entry) = self.redo_stack.pop() else {
+        let Some(entry) = self.redo_stack.last() else {
             return Ok(None);
         };
-        for change in &entry.changes {
-            change.apply(&mut self.sprite)?;
-        }
+        self.redo_conflict(entry)?;
+        apply_all(&mut self.sprite, &entry.changes)?;
+        let mut entry = self
+            .redo_stack
+            .pop()
+            .ok_or_else(|| OpError::InvalidArgument("redo entry vanished".to_string()))?;
+        entry.undone_at = 0;
         self.revision += 1;
         let label = entry.label.clone();
         self.undo_stack.push(entry);
+        self.log.push(LogEntry::Redo {
+            revision: self.revision,
+        });
         Ok(Some(label))
     }
 
@@ -200,9 +357,75 @@ impl Engine {
             .collect()
     }
 
-    /// Every successfully applied command, in order (audit/replay record; not used for undo).
+    /// Every successfully applied command and engine event, in order.
     pub fn log(&self) -> &[LogEntry] {
         &self.log
+    }
+
+    fn check_replay_revision(&self, expected: u64) -> Result<(), OpError> {
+        if self.revision != expected {
+            return Err(OpError::InvalidArgument(format!(
+                "replay diverged: the log says revision {expected}, the engine has {}",
+                self.revision
+            )));
+        }
+        Ok(())
+    }
+
+    fn txn_index(&self, origin: &Origin) -> Result<usize, OpError> {
+        self.txns
+            .iter()
+            .position(|t| t.origin == *origin)
+            .ok_or(OpError::NoTransaction)
+    }
+
+    /// Everything currently applied that can still matter for conflicts: the
+    /// changes in open transactions and the changes in the undo stack.
+    fn applied_changes(&self) -> impl Iterator<Item = &AppliedChange> {
+        self.txns
+            .iter()
+            .flat_map(|t| t.changes.iter())
+            .chain(self.undo_stack.iter().flat_map(|e| e.changes.iter()))
+    }
+
+    /// Conflict when reverting `own` (undo of an entry, rollback of a
+    /// transaction): a still-applied change outside `own`, made after one of
+    /// `own`'s changes, that touches what that change wrote.
+    fn revert_conflict(&self, own: &[AppliedChange]) -> Result<(), OpError> {
+        let own_seqs: HashSet<u64> = own.iter().map(|c| c.seq).collect();
+        for c in own {
+            let (_, writes) = c.change.keys();
+            for later in self.applied_changes() {
+                if own_seqs.contains(&later.seq) || later.seq <= c.seq {
+                    continue;
+                }
+                if let Some(key) = conflicting_key(&writes, &later.change) {
+                    return Err(OpError::Conflict(format!(
+                        "a later change touches {key:?}, which this edit wrote"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Conflict when redoing `entry`: a change applied after the entry was
+    /// undone, and still applied, that touches what the entry writes.
+    fn redo_conflict(&self, entry: &UndoEntry) -> Result<(), OpError> {
+        for c in &entry.changes {
+            let (_, writes) = c.change.keys();
+            for later in self.applied_changes() {
+                if later.seq <= entry.undone_at {
+                    continue;
+                }
+                if let Some(key) = conflicting_key(&writes, &later.change) {
+                    return Err(OpError::Conflict(format!(
+                        "a change made after the undo touches {key:?}, which this edit wrote"
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn push_history(&mut self, entry: UndoEntry) {
@@ -211,25 +434,37 @@ impl Engine {
     }
 
     fn apply_inner(&mut self, cmd: Command, origin: Origin) -> Result<Outcome, OpError> {
-        let (change, created_layer) = self.build(&cmd)?;
+        let op = spec(cmd.kind());
+        permitted(op, &origin)?;
+        let (change, created_layer, logged_cmd) = self.build(&cmd)?;
         change.apply(&mut self.sprite)?;
         self.revision += 1;
+        self.seq_next += 1;
         if created_layer.is_some() {
             self.next_layer_id = self.next_layer_id.and_then(|id| id.checked_add(1));
         }
-        let label = history_label(spec(cmd.kind()).title, &origin);
-        self.log.push(LogEntry {
+        self.log.push(LogEntry::Apply {
             revision: self.revision,
             origin: origin.clone(),
-            command: cmd,
+            command: logged_cmd,
         });
-        match &mut self.txn {
-            Some(txn) => txn.changes.push(change),
-            None => self.push_history(UndoEntry {
-                label,
-                origin,
-                changes: vec![change],
-            }),
+        // An unundoable command is applied and logged only (rule 11).
+        if op.undoable {
+            let applied = AppliedChange {
+                seq: self.seq_next,
+                change,
+            };
+            if let Some(idx) = self.txns.iter().position(|t| t.origin == origin) {
+                self.txns[idx].changes.push(applied);
+            } else {
+                let label = history_label(op.title, &origin);
+                self.push_history(UndoEntry {
+                    label,
+                    origin,
+                    changes: vec![applied],
+                    undone_at: 0,
+                });
+            }
         }
         Ok(Outcome {
             revision: self.revision,
@@ -237,19 +472,25 @@ impl Engine {
         })
     }
 
-    /// Validate `cmd` and record its change without touching the sprite.
-    fn build(&self, cmd: &Command) -> Result<(Change, Option<LayerId>), OpError> {
+    /// Validate `cmd` and record its change without touching the sprite. The
+    /// returned command is the one to log: AddLayer may carry a generated uuid.
+    fn build(&self, cmd: &Command) -> Result<(Change, Option<LayerId>, Command), OpError> {
         match cmd {
-            Command::SetPixels(c) => Ok((self.build_set_pixels(c)?, None)),
+            Command::SetPixels(c) => Ok((self.build_set_pixels(c)?, None, cmd.clone())),
             Command::AddLayer(c) => {
-                let (change, id) = self.build_add_layer(c)?;
-                Ok((change, Some(id)))
+                let (change, id, logged) = self.build_add_layer(c)?;
+                Ok((change, Some(id), logged))
             }
-            Command::RemoveLayer(c) => Ok((self.build_remove_layer(c)?, None)),
-            Command::RenameLayer(c) => Ok((self.build_rename_layer(c)?, None)),
-            Command::AddFrame(c) => Ok((self.build_add_frame(c)?, None)),
-            Command::SetFrameDuration(c) => Ok((self.build_set_frame_duration(c)?, None)),
-            Command::SetPaletteColor(c) => Ok((self.build_set_palette_color(c)?, None)),
+            Command::RemoveLayer(c) => Ok((self.build_remove_layer(c)?, None, cmd.clone())),
+            Command::RenameLayer(c) => Ok((self.build_rename_layer(c)?, None, cmd.clone())),
+            Command::AddFrame(c) => Ok((self.build_add_frame(c)?, None, cmd.clone())),
+            Command::SetFrameDuration(c) => {
+                Ok((self.build_set_frame_duration(c)?, None, cmd.clone()))
+            }
+            Command::SetPaletteColor(c) => {
+                Ok((self.build_set_palette_color(c)?, None, cmd.clone()))
+            }
+            Command::ResizePalette(c) => Ok((self.build_resize_palette(c)?, None, cmd.clone())),
         }
     }
 
@@ -287,6 +528,17 @@ impl Engine {
                     sprite: self.sprite.color_mode,
                     pixel: p.value.mode(),
                 });
+            }
+            // An indexed sprite keeps every used index in the palette; the
+            // transparent index is always allowed (rule 12).
+            if let PixelValue::Indexed { index } = p.value {
+                let len = self.sprite.palette.entries.len();
+                if index != self.sprite.transparent_index && usize::from(index) >= len {
+                    return Err(OpError::PaletteIndex {
+                        index: u32::from(index),
+                        len,
+                    });
+                }
             }
         }
 
@@ -454,9 +706,14 @@ impl Engine {
         Ok(image)
     }
 
-    fn build_add_layer(&self, cmd: &AddLayer) -> Result<(Change, LayerId), OpError> {
+    fn build_add_layer(&self, cmd: &AddLayer) -> Result<(Change, LayerId, Command), OpError> {
         if cmd.name.is_empty() {
             return Err(OpError::InvalidArgument("layer name is empty".to_string()));
+        }
+        if cmd.name.len() > 65535 {
+            return Err(OpError::InvalidArgument(
+                "layer name exceeds the file format limit of 65535 bytes".to_string(),
+            ));
         }
         let (index, parent) = match cmd.above {
             Some(above) => {
@@ -473,6 +730,19 @@ impl Engine {
             self.next_layer_id
                 .ok_or_else(|| OpError::InvalidArgument("no layer ids left".to_string()))?,
         );
+        // A generated uuid goes into the logged command too, so replay is
+        // deterministic (rule 9).
+        let has_uuids = self.sprite.flags.contains(HeaderFlags::LAYER_UUIDS);
+        let uuid = match cmd.uuid {
+            Some(_) if !has_uuids => {
+                return Err(OpError::InvalidArgument(
+                    "the sprite has no layer UUIDs flag".to_string(),
+                ));
+            }
+            Some(u) => Some(u),
+            None if has_uuids => Some(Uuid::new_v4().into_bytes()),
+            None => None,
+        };
         let layer = Layer {
             id,
             parent,
@@ -481,14 +751,15 @@ impl Engine {
             flags: LayerFlags(LayerFlags::VISIBLE | LayerFlags::EDITABLE),
             blend_mode: BlendMode::Normal,
             opacity: 255,
-            uuid: self
-                .sprite
-                .flags
-                .contains(HeaderFlags::LAYER_UUIDS)
-                .then(|| Uuid::new_v4().into_bytes()),
+            uuid,
             user_data: UserData::default(),
         };
-        Ok((Change::LayerInsert { index, layer }, id))
+        let logged = Command::AddLayer(AddLayer {
+            name: cmd.name.clone(),
+            above: cmd.above,
+            uuid,
+        });
+        Ok((Change::LayerInsert { index, layer }, id, logged))
     }
 
     fn build_remove_layer(&self, cmd: &RemoveLayer) -> Result<Change, OpError> {
@@ -520,6 +791,11 @@ impl Engine {
         if cmd.name.is_empty() {
             return Err(OpError::InvalidArgument("layer name is empty".to_string()));
         }
+        if cmd.name.len() > 65535 {
+            return Err(OpError::InvalidArgument(
+                "layer name exceeds the file format limit of 65535 bytes".to_string(),
+            ));
+        }
         let before = self
             .sprite
             .layer(cmd.layer)
@@ -539,7 +815,13 @@ impl Engine {
                 "frame duration must be non-zero".to_string(),
             ));
         }
+        if self.sprite.frames.len() >= 65535 {
+            return Err(OpError::InvalidArgument(
+                "a sprite can hold at most 65535 frames".to_string(),
+            ));
+        }
         Ok(Change::FrameAppend {
+            index: self.sprite.frames.len() as u32,
             frame: Frame {
                 duration_ms: cmd.duration_ms,
             },
@@ -582,5 +864,25 @@ impl Engine {
             before,
             after: cmd.rgba,
         })
+    }
+
+    /// Growing appends opaque black entries; shrinking drops from the end (rule 12).
+    fn build_resize_palette(&self, cmd: &ResizePalette) -> Result<Change, OpError> {
+        if !(1..=256).contains(&cmd.len) {
+            return Err(OpError::InvalidArgument(format!(
+                "palette length must be 1 to 256, not {}",
+                cmd.len
+            )));
+        }
+        let before = self.sprite.palette.entries.clone();
+        let mut after = before.clone();
+        after.resize(
+            cmd.len as usize,
+            PaletteEntry {
+                rgba: [0, 0, 0, 255],
+                name: None,
+            },
+        );
+        Ok(Change::PaletteResize { before, after })
     }
 }

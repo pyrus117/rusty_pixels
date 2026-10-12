@@ -37,7 +37,7 @@ fn kitchen_sink() -> Sprite {
         mk(2, None, LayerKind::Image),
     ];
     for f in 0..3u32 {
-        let mut img = Image::new(3, 2, ColorMode::Rgba);
+        let mut img = Image::new(3, 2, ColorMode::Rgba).unwrap();
         img.put(
             f,
             1,
@@ -81,7 +81,7 @@ fn kitchen_sink() -> Sprite {
             y: 0,
             opacity: 128,
             z_index: 0,
-            content: CelContent::Image(Image::new(10, 7, ColorMode::Rgba)),
+            content: CelContent::Image(Image::new(10, 7, ColorMode::Rgba).unwrap()),
             extra: None,
             user_data: UserData::default(),
         },

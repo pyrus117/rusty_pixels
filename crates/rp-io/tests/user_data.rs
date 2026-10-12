@@ -393,7 +393,7 @@ fn user_data_everywhere_round_trips() {
             y: 0,
             opacity: 255,
             z_index: 0,
-            content: CelContent::Image(Image::new(1, 1, ColorMode::Rgba)),
+            content: CelContent::Image(Image::new(1, 1, ColorMode::Rgba).unwrap()),
             extra: None,
             user_data: ud("cel"),
         },

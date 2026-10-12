@@ -27,6 +27,7 @@ fn add(e: &mut Engine, name: &str, above: Option<LayerId>) -> LayerId {
         Command::AddLayer(AddLayer {
             name: name.into(),
             above,
+            uuid: None,
         }),
         Origin::Human,
     )
@@ -204,7 +205,7 @@ fn writing_through_a_linked_cel_edits_the_source() {
         y: 0,
         opacity: 255,
         z_index: 0,
-        content: CelContent::Image(Image::new(4, 4, ColorMode::Rgba)),
+        content: CelContent::Image(Image::new(4, 4, ColorMode::Rgba).unwrap()),
         extra: None,
         user_data: UserData::default(),
     };
@@ -266,6 +267,7 @@ fn transactions_group_and_label_with_agent_prefix() {
             Command::AddLayer(AddLayer {
                 name: "a".into(),
                 above: None,
+                uuid: None,
             }),
             agent(),
         )
@@ -310,6 +312,7 @@ fn single_agent_command_is_labelled() {
         Command::AddLayer(AddLayer {
             name: "a".into(),
             above: None,
+            uuid: None,
         }),
         agent(),
     )
@@ -351,6 +354,7 @@ fn stale_revision_is_rejected() {
         Command::AddLayer(AddLayer {
             name: "agent".into(),
             above: None,
+            uuid: None,
         }),
         agent(),
         seen,
@@ -367,7 +371,8 @@ fn stale_revision_is_rejected() {
         e.apply_at(
             Command::AddLayer(AddLayer {
                 name: "ok".into(),
-                above: None
+                above: None,
+                uuid: None
             }),
             agent(),
             seen + 1

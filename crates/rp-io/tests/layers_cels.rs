@@ -354,7 +354,7 @@ fn rich() -> Sprite {
         img_layer(1, Some(0), LayerKind::Image),
         img_layer(2, None, LayerKind::Image),
     ];
-    let mut img = Image::new(2, 3, ColorMode::Rgba);
+    let mut img = Image::new(2, 3, ColorMode::Rgba).unwrap();
     img.put(
         1,
         2,

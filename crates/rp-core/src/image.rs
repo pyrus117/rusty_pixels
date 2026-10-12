@@ -21,13 +21,19 @@ fn data_len(width: u32, height: u32, mode: ColorMode) -> usize {
 
 impl Image {
     /// All bytes zero (transparent for RGBA/greyscale, index 0 for indexed).
-    pub fn new(width: u32, height: u32, mode: ColorMode) -> Image {
-        Image {
+    /// TooLarge when the byte size overflows or exceeds MAX_RGBA_BYTES.
+    pub fn new(width: u32, height: u32, mode: ColorMode) -> Result<Image, CoreError> {
+        let len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|px| px.checked_mul(mode.bytes_per_pixel()))
+            .filter(|&len| len <= crate::rgba::MAX_RGBA_BYTES)
+            .ok_or(CoreError::TooLarge { width, height })?;
+        Ok(Image {
             width,
             height,
             mode,
-            data: vec![0u8; data_len(width, height, mode)],
-        }
+            data: vec![0u8; len],
+        })
     }
 
     /// Errors with DataLength unless data.len() == width*height*bpp (computed without overflow;

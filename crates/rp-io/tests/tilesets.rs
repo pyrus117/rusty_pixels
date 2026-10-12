@@ -246,7 +246,7 @@ fn bad_tilemap_cels_are_errors() {
 
 fn tiled_sprite() -> Sprite {
     let mut s = Sprite::new(4, 2, ColorMode::Rgba);
-    let mut t0 = Image::new(2, 2, ColorMode::Rgba);
+    let mut t0 = Image::new(2, 2, ColorMode::Rgba).unwrap();
     t0.put(
         0,
         0,
@@ -267,7 +267,7 @@ fn tiled_sprite() -> Sprite {
         base_index: 1,
         name: "set".into(),
         external: None,
-        tiles: vec![Image::new(2, 2, ColorMode::Rgba), t0],
+        tiles: vec![Image::new(2, 2, ColorMode::Rgba).unwrap(), t0],
         user_data: UserData::default(),
         tile_user_data: vec![
             UserData::default(),

@@ -35,7 +35,7 @@ fn with_cel(x: i32, y: i32, w: u32, h: u32) -> Sprite {
             y,
             opacity: 255,
             z_index: 0,
-            content: CelContent::Image(Image::new(w, h, ColorMode::Rgba)),
+            content: CelContent::Image(Image::new(w, h, ColorMode::Rgba).unwrap()),
             extra: None,
             user_data: UserData::default(),
         },
@@ -123,6 +123,7 @@ fn exhausted_layer_ids_are_an_error_not_a_duplicate() {
         Command::AddLayer(AddLayer {
             name: "x".into(),
             above: None,
+            uuid: None,
         }),
         Origin::Human,
     );
@@ -139,6 +140,7 @@ fn failing_add_and_remove_change_nothing() {
         Command::AddLayer(AddLayer {
             name: "x".into(),
             above: Some(LayerId(42)),
+            uuid: None,
         }),
         Origin::Human,
     );
@@ -147,6 +149,7 @@ fn failing_add_and_remove_change_nothing() {
         Command::AddLayer(AddLayer {
             name: String::new(),
             above: None,
+            uuid: None,
         }),
         Origin::Human,
     );

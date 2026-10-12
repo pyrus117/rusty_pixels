@@ -326,7 +326,9 @@ fn writer_rejects_cel_image_in_the_wrong_mode() {
     s.layers = vec![image_layer(0, None, LayerKind::Image)];
     s.cels.insert(
         (LayerId(0), 0),
-        cel_with(CelContent::Image(Image::new(1, 1, ColorMode::Rgba))),
+        cel_with(CelContent::Image(
+            Image::new(1, 1, ColorMode::Rgba).unwrap(),
+        )),
     );
     assert!(matches!(
         rp_io::write(&s),
@@ -350,7 +352,7 @@ fn writer_rejects_zero_size_tiles_in_file() {
         base_index: 1,
         name: "t".into(),
         external: None,
-        tiles: vec![Image::new(0, 0, ColorMode::Rgba)],
+        tiles: vec![Image::new(0, 0, ColorMode::Rgba).unwrap()],
         user_data: UserData::default(),
         tile_user_data: vec![],
     }];

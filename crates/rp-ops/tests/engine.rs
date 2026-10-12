@@ -27,6 +27,7 @@ fn add(e: &mut Engine, name: &str, above: Option<LayerId>) -> LayerId {
         Command::AddLayer(AddLayer {
             name: name.into(),
             above,
+            uuid: None,
         }),
         Origin::Human,
     )
@@ -204,7 +205,7 @@ fn writing_through_a_linked_cel_edits_the_source() {
         y: 0,
         opacity: 255,
         z_index: 0,
-        content: CelContent::Image(Image::new(4, 4, ColorMode::Rgba)),
+        content: CelContent::Image(Image::new(4, 4, ColorMode::Rgba).unwrap()),
         extra: None,
         user_data: UserData::default(),
     };
@@ -266,6 +267,7 @@ fn transactions_group_and_label_with_agent_prefix() {
             Command::AddLayer(AddLayer {
                 name: "a".into(),
                 above: None,
+                uuid: None,
             }),
             agent(),
         )
@@ -285,12 +287,13 @@ fn transactions_group_and_label_with_agent_prefix() {
         agent(),
     )
     .unwrap();
-    assert!(matches!(e.undo(), Err(OpError::TransactionOpen)));
+    // M1: undo is allowed while a transaction is open; here there is nothing to undo yet.
+    assert_eq!(e.undo().unwrap(), None);
     assert!(matches!(
-        e.begin("x", Origin::Human),
+        e.begin("x", agent()),
         Err(OpError::TransactionOpen)
     ));
-    e.commit().unwrap();
+    e.commit(&agent()).unwrap();
     assert_eq!(
         e.history(),
         vec![HistoryEntry {
@@ -309,6 +312,7 @@ fn single_agent_command_is_labelled() {
         Command::AddLayer(AddLayer {
             name: "a".into(),
             above: None,
+            uuid: None,
         }),
         agent(),
     )
@@ -324,14 +328,20 @@ fn rollback_restores_and_leaves_no_history() {
     let rev = e.revision();
     e.begin("try", Origin::Human).unwrap();
     px(&mut e, a, 0, &[(3, 3, RED)]).unwrap();
-    e.rollback().unwrap();
+    e.rollback(&Origin::Human).unwrap();
     assert_eq!(e.sprite(), &before);
     assert_eq!(e.history().len(), 1);
     assert_eq!(e.revision(), rev + 2, "apply +1, rollback +1");
-    assert!(matches!(e.commit(), Err(OpError::NoTransaction)));
-    assert!(matches!(e.rollback(), Err(OpError::NoTransaction)));
+    assert!(matches!(
+        e.commit(&Origin::Human),
+        Err(OpError::NoTransaction)
+    ));
+    assert!(matches!(
+        e.rollback(&Origin::Human),
+        Err(OpError::NoTransaction)
+    ));
     e.begin("empty", Origin::Human).unwrap();
-    e.commit().unwrap();
+    e.commit(&Origin::Human).unwrap();
     assert_eq!(e.history().len(), 1, "empty commit adds nothing");
 }
 
@@ -344,6 +354,7 @@ fn stale_revision_is_rejected() {
         Command::AddLayer(AddLayer {
             name: "agent".into(),
             above: None,
+            uuid: None,
         }),
         agent(),
         seen,
@@ -360,7 +371,8 @@ fn stale_revision_is_rejected() {
         e.apply_at(
             Command::AddLayer(AddLayer {
                 name: "ok".into(),
-                above: None
+                above: None,
+                uuid: None
             }),
             agent(),
             seen + 1
@@ -522,8 +534,23 @@ fn log_records_every_applied_command() {
         .unwrap();
     let log = e.log();
     assert_eq!(log.len(), 2);
-    assert_eq!(log[0].origin, Origin::Human);
-    assert_eq!(log[1].origin, agent());
-    assert_eq!(log[1].revision, 2);
-    assert!(matches!(log[1].command, Command::AddFrame(_)));
+    assert!(matches!(
+        &log[0],
+        LogEntry::Apply {
+            origin: Origin::Human,
+            ..
+        }
+    ));
+    match &log[1] {
+        LogEntry::Apply {
+            revision,
+            origin,
+            command,
+        } => {
+            assert_eq!(*origin, agent());
+            assert_eq!(*revision, 2);
+            assert!(matches!(command, Command::AddFrame(_)));
+        }
+        other => panic!("{other:?}"),
+    }
 }

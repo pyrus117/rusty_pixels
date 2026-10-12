@@ -156,7 +156,9 @@ fn many_frames_with_cels_and_raw_chunks_write_in_linear_time() {
     };
     s.cels.insert(
         (LayerId(0), 0),
-        cel(CelContent::Image(Image::new(1, 1, ColorMode::Rgba))),
+        cel(CelContent::Image(
+            Image::new(1, 1, ColorMode::Rgba).unwrap(),
+        )),
     );
     for f in 1..frames {
         s.cels

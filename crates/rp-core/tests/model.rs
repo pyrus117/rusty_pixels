@@ -57,7 +57,7 @@ fn pixel_bytes_are_in_file_order() {
 
 #[test]
 fn image_put_get_and_errors() {
-    let mut img = Image::new(3, 2, ColorMode::Rgba);
+    let mut img = Image::new(3, 2, ColorMode::Rgba).unwrap();
     assert_eq!(img.data().len(), 24);
     img.put(
         2,
@@ -158,7 +158,7 @@ fn subtree_ranges_and_depths() {
 #[test]
 fn resolve_cel_follows_one_link() {
     let mut s = tree();
-    let img = Image::new(1, 1, ColorMode::Rgba);
+    let img = Image::new(1, 1, ColorMode::Rgba).unwrap();
     let base = Cel {
         x: 0,
         y: 0,

@@ -1,7 +1,9 @@
 use crate::command::{
-    AddFrame, AddLayer, CommandKind, RemoveLayer, RenameLayer, SetFrameDuration, SetPaletteColor,
-    SetPixels,
+    AddFrame, AddLayer, CommandKind, RemoveLayer, RenameLayer, ResizePalette, SetFrameDuration,
+    SetPaletteColor, SetPixels,
 };
+use crate::engine::Origin;
+use crate::error::OpError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpSpec {
@@ -15,7 +17,7 @@ pub struct OpSpec {
     pub agent_exposed: bool,
 }
 
-static SPECS: [OpSpec; 7] = [
+static SPECS: [OpSpec; 8] = [
     OpSpec {
         id: "set_pixels",
         title: "Set Pixels",
@@ -79,6 +81,15 @@ static SPECS: [OpSpec; 7] = [
         undoable: true,
         agent_exposed: true,
     },
+    OpSpec {
+        id: "resize_palette",
+        title: "Palette Size",
+        doc: "Set how many entries the palette has; growing appends black entries.",
+        menu_path: None,
+        default_shortcut: None,
+        undoable: true,
+        agent_exposed: true,
+    },
 ];
 
 pub fn registry() -> &'static [OpSpec] {
@@ -95,7 +106,16 @@ pub fn spec(kind: CommandKind) -> &'static OpSpec {
         CommandKind::AddFrame => &SPECS[4],
         CommandKind::SetFrameDuration => &SPECS[5],
         CommandKind::SetPaletteColor => &SPECS[6],
+        CommandKind::ResizePalette => &SPECS[7],
     }
+}
+
+/// Agents may only run ops with `agent_exposed`.
+pub fn permitted(spec: &OpSpec, origin: &Origin) -> Result<(), OpError> {
+    if !spec.agent_exposed && matches!(origin, Origin::Agent { .. }) {
+        return Err(OpError::NotAgentExposed(spec.id));
+    }
+    Ok(())
 }
 
 /// JSON Schema (schemars, draft 2020-12) of the op's parameter struct, without the "op" field.
@@ -108,5 +128,6 @@ pub fn params_schema(kind: CommandKind) -> serde_json::Value {
         CommandKind::AddFrame => schemars::schema_for!(AddFrame).to_value(),
         CommandKind::SetFrameDuration => schemars::schema_for!(SetFrameDuration).to_value(),
         CommandKind::SetPaletteColor => schemars::schema_for!(SetPaletteColor).to_value(),
+        CommandKind::ResizePalette => schemars::schema_for!(ResizePalette).to_value(),
     }
 }

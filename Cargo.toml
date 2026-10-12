@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/rp-core", "crates/rp-io", "crates/rp-ops", "crates/rp-corpus"]
+members = ["crates/rp-core", "crates/rp-io", "crates/rp-ops", "crates/rp-render", "crates/rp-corpus"]
 
 [workspace.package]
 version = "0.0.1"
@@ -13,6 +13,7 @@ repository = "https://github.com/pyrus117/rusty_pixels"
 rp-core = { path = "crates/rp-core" }
 rp-io = { path = "crates/rp-io" }
 rp-ops = { path = "crates/rp-ops" }
+rp-render = { path = "crates/rp-render" }
 thiserror = "2.0.21"
 flate2 = "1.1.10"
 serde = { version = "1.0.229", features = ["derive"] }

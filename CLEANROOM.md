@@ -27,6 +27,7 @@ records every source consulted so that claim can be checked.
 | 2026-10-12 | Installed Aseprite run in batch mode with our own Lua script (`tools/fixtures/make_fixtures.lua`), producing the files in `crates/rp-io/tests/fixtures/` | Normal use; outputs are our own art | Test fixtures; chunk order observed from those outputs |
 | 2026-10-12 | Installed Aseprite rendering local `.aseprite` files to PNG (`tools/corpus.sh`) | Normal use; outputs never committed | Black-box round-trip oracle |
 | 2026-10-12 | Installed Aseprite loading crafted files in batch mode (second-review probes, kept outside git in the `m0-fix2-ops` worktree's `target/ase-probe/`) | Normal use; files are our own | Behaviour behind R1, R2, R9, C2 and C3 |
+| 2026-10-12 | W3C Compositing and Blending Level 1 (public spec) | W3C Document Licence | Blend-mode formulas in `rp-render` (soft light, SetSat/SetLum/ClipColor); integer rounding fitted to the oracle fixtures |
 
 ## Incidents
 

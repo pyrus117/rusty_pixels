@@ -11,4 +11,8 @@ specification (docs/ase-file-specs.md in the Aseprite repository). That document
 for interoperability but carries no explicit licence; it is not redistributed here.
 
 Third-party code ported under compatible licences is listed below.
-(none yet)
+- Blend-mode formulas in `rp-render` (soft light; the nonseparable hue,
+  saturation, color and luminosity SetSat/SetLum/ClipColor) follow W3C
+  Compositing and Blending Level 1 (https://www.w3.org/TR/compositing-1/),
+  under the W3C Document Licence. The integer rounding and the compositing
+  ladder were fitted to this project's oracle fixtures.

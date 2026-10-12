@@ -3,10 +3,15 @@
 mod bytes;
 mod chunks;
 mod error;
+pub mod export;
 mod read;
 mod write;
 
 pub use error::AseError;
+pub use export::{
+    ExportError, GifFrame, JsonFormat, Sheet, SheetFrame, SheetMeta, SheetRect, SheetType,
+    encode_gif, encode_png, layout_sheet, sheet_json,
+};
 pub use read::{dump_chunks, read};
 pub use write::write;
 

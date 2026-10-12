@@ -161,6 +161,30 @@ Commit message: `feat(io): PNG, GIF and sprite-sheet export`.
 
 ---
 
+## B1a: drawing geometry (`m1-tools`)
+
+A new crate, `crates/rp-tools`, that is pure geometry with no dependencies. It decides which pixels a stroke covers; rp-ops turns those pixels into cel changes in B1c. The oracle is `crates/rp-tools/tests/fixtures/`, made by `tools/fixtures/make_tool_fixtures.lua` with the real Aseprite: 23 point pairs × 5 shape tools, plus 6 paint-bucket fills on a maze. The tests are `tests/oracle.rs` and `tests/tools.rs`.
+
+**API**
+```rust
+pub fn line(x0: i32, y0: i32, x1: i32, y1: i32, bounds: (u32, u32)) -> Vec<(i32, i32)>;
+pub fn rectangle(x0: i32, y0: i32, x1: i32, y1: i32, filled: bool, bounds: (u32, u32)) -> Vec<(i32, i32)>;
+pub fn ellipse(x0: i32, y0: i32, x1: i32, y1: i32, filled: bool, bounds: (u32, u32)) -> Vec<(i32, i32)>;
+pub enum Connectivity { Four, Eight }
+pub fn flood_fill(seed: (u32, u32), bounds: (u32, u32), connectivity: Connectivity,
+                  same: impl Fn(u32, u32) -> bool) -> Vec<(u32, u32)>;
+```
+
+**Behaviour rules**
+1. Shapes use inclusive corner points, and corner order doesn't matter for rectangles and ellipses. A line is drawn from point 0 to point 1, and Aseprite's tie-breaking is whatever the oracle shows.
+2. Results contain only points inside `[0,w) × [0,h)`, each point once, in any order.
+3. **The work scales with the bounds, not the shape.** Clip analytically; never walk a 120,000-pixel edge to keep 64 points. Any i32 coordinate is valid input: use i64/i128 internally so nothing overflows, and never panic.
+4. `flood_fill` returns the region connected to the seed in which `same(x, y)` holds. A seed outside the bounds, or one that fails `same`, gives an empty result. It must not recurse (use an explicit stack or scanlines) and must take linear time. Aseprite's paint bucket default is 4-connected (observed).
+
+Commit message: `feat(tools): drawing geometry matching the Aseprite oracle`.
+
+---
+
 ## Phases B to D (outline, detailed after Phase A merges)
 
 - **B1 commands.** Covers: layer visibility, opacity and blend; add group; move layer; insert, remove and duplicate frame (re-keying cels); add, remove and set tag; clear cel; link cels; set cel opacity; and drawing as commands built on `rp-tools` (line with Bresenham, rectangle, ellipse, flood fill in 4- or 8-connected modes, each with a fill option). Every drawing command produces an ordinary cel change, so undo and conflict keys come free.

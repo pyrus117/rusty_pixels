@@ -141,14 +141,21 @@ pub fn sheet_json(frames: &[SheetFrame], sheet: &Sheet, format: JsonFormat, meta
    - All frames must be the same size (`MixedSizes`), and there must be at least one (`Empty`).
    - Horizontal: one row. Vertical: one column.
    - `Rows { columns }` fills left to right, then wraps. `Columns { rows }` fills top to bottom, then wraps. Both use ceil for the other dimension.
+   - A count above the frame count is clamped to the frame count (observed: 3 frames with `--sheet-columns 5` give a 3-wide sheet).
+   - `SheetFrame` derives `Clone`.
    - `columns` or `rows` of 0 is `BadLayout`. Unused cells are transparent. There is no padding.
 4. `sheet_json` matches the observed Aseprite layout, key for key and in this order.
    - Each frame: `filename` (Array only; in Hash the name is the key), `frame {x,y,w,h}`, `rotated: false`, `trimmed: false`, `spriteSourceSize {x:0,y:0,w,h}`, `sourceSize {w,h}`, `duration`.
    - `meta`: `app` is `"https://github.com/pyrus117/rusty_pixels"`, `version` is the rp-io crate version, then `image`, `format: "RGBA8888"`, `size {w,h}`, `scale: "1"`.
    - `frameTags` appears only if `tags` is non-empty. Each tag is `{name, from, to, direction}`, with direction `forward|reverse|pingpong|pingpong_reverse`.
-   - `layers` appears only if it is `Some`. Each layer is `{name, opacity, blendMode}`, with blendMode in snake_case words like `"normal"`, `"color_dodge"`, `"hsl_hue"` (as named in the test).
+   - `layers` appears only if it is `Some`, listing the given layers in order (the caller drops hidden layers, as Aseprite does without `--all-layers`).
+     - An image layer is `{name, group?, opacity, blendMode}`. A group layer is `{name, group?}`.
+     - `group` is the parent's name, and appears only when the parent is in the given slice.
+     - blendMode names were observed: `normal multiply screen overlay darken lighten color_dodge color_burn hard_light soft_light difference exclusion hsl_hue hsl_saturation hsl_color hsl_luminosity addition subtract divide`.
    - Tag `color` and `repeat` are left out in M1.
    - The tests parse the JSON and check structure and key order. Whitespace is free.
+   - serde_json's default `Map` sorts keys, so write the JSON in order: either by hand, using `serde_json::to_string` for string escaping, or with ordered serialisation that doesn't turn on `preserve_order` for the whole workspace.
+5. Observed for D1: a single-frame sprite's frame is named `"<title>.aseprite"` with no number.
 
 Commit message: `feat(io): PNG, GIF and sprite-sheet export`.
 

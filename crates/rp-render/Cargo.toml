@@ -1,0 +1,16 @@
+[package]
+name = "rp-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rp-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rp-io.workspace = true
+png.workspace = true
+
+[lints]
+workspace = true

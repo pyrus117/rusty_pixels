@@ -29,4 +29,4 @@ jobs:
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p rp-core -p rp-io -p rp-ops --target aarch64-linux-android
+      - run: cargo check -p rp-core -p rp-io -p rp-ops -p rp-render --target aarch64-linux-android

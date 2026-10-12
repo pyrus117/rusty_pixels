@@ -270,6 +270,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rp-render"
+version = "0.0.1"
+dependencies = [
+ "png",
+ "rp-core",
+ "rp-io",
+ "thiserror",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"

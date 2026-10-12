@@ -7,7 +7,8 @@ set -euo pipefail
 
 prompt_file=${1:?usage: tools/mimo.sh <prompt-file> [log-file]}
 log_file=${2:-/dev/stdout}
-repo=$(cd "$(dirname "$0")/.." && pwd)
+# MIMO_REPO points a worker at a worktree while the launcher itself comes from main.
+repo=${MIMO_REPO:-$(cd "$(dirname "$0")/.." && pwd)}
 key_file="$HOME/.config/helm/keys/mimo"
 
 [[ -r $prompt_file ]] || { echo "mimo.sh: cannot read prompt file $prompt_file" >&2; exit 2; }
@@ -29,6 +30,7 @@ env -i \
   ANTHROPIC_DEFAULT_FABLE_MODEL=$model CLAUDE_CODE_SUBAGENT_MODEL=$model CLAUDE_CODE_AUTO_MODE_MODEL=$model \
   ANTHROPIC_DEFAULT_HAIKU_MODEL=$small ANTHROPIC_SMALL_FAST_MODEL=$small \
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 ENABLE_TOOL_SEARCH=true \
+  CLAUDE_CODE_MAX_OUTPUT_TOKENS="${MIMO_MAX_OUTPUT_TOKENS:-64000}" \
   claude -p "$(cat "$prompt_file")" \
     --model "$model" --fallback-model "$small" \
     --permission-mode acceptEdits \

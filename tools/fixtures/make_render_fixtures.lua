@@ -25,12 +25,13 @@ local function save(sprite, name)
   print("wrote " .. name)
 end
 
--- Deterministic LCG so the oracle is reproducible without math.random.
+-- Deterministic LCG so the oracle is reproducible without math.random. The low
+-- bits of this LCG repeat with a short period, so callers get the high bits.
 local function lcg(seed)
   local state = seed
   return function()
     state = (state * 1103515245 + 12345) % 2147483648
-    return state
+    return state // 65536
   end
 end
 

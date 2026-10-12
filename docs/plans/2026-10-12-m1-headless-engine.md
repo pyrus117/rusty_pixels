@@ -185,6 +185,67 @@ Commit message: `feat(tools): drawing geometry matching the Aseprite oracle`.
 
 ---
 
+## B1b: layer, frame, tag and cel commands (`m1-cmds`)
+
+Sixteen new commands in rp-ops. The tests are in `crates/rp-ops/tests/m1_commands.rs`. Every command undoes to the exact previous sprite and redoes to the exact result.
+
+**Registry** (id / title / menu path, shortcut `None` unless given). All are undoable and agent-exposed, and each parameter struct is `deny_unknown_fields`:
+
+| id | params | title | menu |
+|---|---|---|---|
+| `set_layer_visible` | layer, visible: bool | Layer Visibility | — |
+| `set_layer_opacity` | layer, opacity: u8 | Layer Opacity | Layer/Properties… |
+| `set_layer_blend_mode` | layer, blend_mode: BlendMode | Layer Blend Mode | Layer/Properties… |
+| `add_group` | name, above: Option | New Group | Layer/New/New Group |
+| `move_layer` | layer, above: Option, into: Option | Move Layer | — |
+| `insert_frame` | at, duration_ms | Insert Frame | Frame/New Empty Frame |
+| `remove_frame` | frame | Delete Frame | Frame/Delete Frame |
+| `duplicate_frame` | frame | Duplicate Frame | Frame/New Frame (Alt+N) |
+| `add_tag` | name, from, to, direction: AniDir | New Tag | Frame/Tags/New Tag |
+| `remove_tag` | index | Delete Tag | Frame/Tags/Delete Tag |
+| `set_tag` | index, name?, from?, to?, direction?, repeat? (each `Option`, `serde(default)`) | Tag Properties | Frame/Tags/Tag Properties… |
+| `clear_cel` | layer, frame | Clear Cel | — |
+| `set_cel_opacity` | layer, frame, opacity: u8 | Cel Opacity | Frame/Cel Properties… |
+| `set_cel_position` | layer, frame, x: i32, y: i32 | Cel Position | — |
+| `link_cels` | layer, frames: Vec<u32> | Link Cels | Frame/Link Cels |
+| `unlink_cel` | layer, frame | Unlink Cel | Frame/Unlink Cel |
+
+The menu paths are command placements of the kind spec §2a allows us to match. The titles are our own words. `add_frame` (append) stays. `Alt+N` moves from `add_frame` to `duplicate_frame`, which is the observed Aseprite default for that shortcut, so `add_frame` gets `None`.
+
+**rp-core serde:** `BlendMode` and `AniDir` derive `Serialize, Deserialize, JsonSchema` with Aseprite's JSON names (the A3 observations: `hsl_hue` … and `forward | reverse | pingpong | pingpong_reverse`).
+
+**Behaviour rules**
+1. **Layer properties.** `set_layer_visible` changes only the VISIBLE bit.
+2. **`add_group`** places like `add_layer`, returns `created_layer`, and has kind Group with flags VISIBLE|EDITABLE.
+3. **`move_layer`** moves the layer's whole subtree.
+   - `into: Some(g)` makes it g's top child (end of g's subtree).
+   - `above: Some(t)` places it directly above t's subtree, with t's parent.
+   - Neither places it at the top of the root stack.
+   - Both given, a target inside the moved subtree, or `into` a non-group: `InvalidArgument`. An unknown id is `UnknownLayer`.
+   - Keys: writes the layer order and the moved layers' properties (parent).
+4. **`insert_frame { at }`** takes `at` from 0 to len; anything else is `UnknownFrame(at)`. `duration_ms` must be > 0, and the 65535-frame limit applies.
+   - Cels and Linked targets at ≥ at shift up by one.
+   - Tags: `from ≥ at` → +1, `to ≥ at` → +1. So a tag that starts at `at` moves, and one that spans it grows.
+5. **`remove_frame`** fails on the last remaining frame (`InvalidArgument`). It deletes that frame's cels and shifts later cels and link targets down.
+   - **Link promotion:** if the removed frame holds a link source, the lowest-numbered linked cel takes the content, and the other links point to it.
+   - Tags: `from > f` → −1, `to ≥ f` → −1. A tag left with no frames is removed.
+6. **`duplicate_frame { f }`** inserts at f+1 a frame with f's duration and copies of f's cels. A Linked cel is copied as a link to the same, shifted, source.
+7. **Tags.** `from ≤ to < frames`, and the name is non-empty and ≤ 65535 bytes. New tags have repeat 0, legacy_rgb [0,0,0] and empty user data. `set_tag` validates the merged result. A bad index is `InvalidArgument`.
+8. **Cels.** `clear_cel` fails on a missing cel and promotes links as in rule 5. A link group is a source plus its links on one layer, and it shares opacity and position, as Aseprite does:
+   - `set_cel_opacity` and `set_cel_position` update every cel in the group.
+   - Positions must fit i16.
+   - `link_cels` needs ≥ 2 frames. The first is resolved to its source, which must exist. Every other frame becomes `Linked { source }`, copying the source's x/y/opacity and replacing whatever was there.
+   - `unlink_cel` turns a Linked cel into a full copy of its source cel. A non-link is `InvalidArgument`.
+9. **Conflict keys.** Add `Key::Tags`, which tag commands write and frame insert/remove also write.
+   - Frame insert/remove writes `FrameExists(i)` and `FrameProps(i)` for every index ≥ the edit point (including the old and new length), plus every re-keyed cel.
+   - Cel group edits write every cel in the group.
+   - `move_layer` writes the layer order.
+   - Tag commands read `FrameExists` for their range.
+
+Commit message: `feat(ops): layer, frame, tag and cel commands`.
+
+---
+
 ## Phases B to D (outline, detailed after Phase A merges)
 
 - **B1 commands.** Covers: layer visibility, opacity and blend; add group; move layer; insert, remove and duplicate frame (re-keying cels); add, remove and set tag; clear cel; link cels; set cel opacity; and drawing as commands built on `rp-tools` (line with Bresenham, rectangle, ellipse, flood fill in 4- or 8-connected modes, each with a fill option). Every drawing command produces an ordinary cel change, so undo and conflict keys come free.

@@ -21,6 +21,7 @@ schemars = "1.2.2"
 strum = { version = "0.28.0", features = ["derive"] }
 uuid = { version = "1.28.0", features = ["v4"] }
 png = "0.18.1"
+gif = "0.14.2"
 anyhow = "1.0.104"
 
 [workspace.lints.rust]

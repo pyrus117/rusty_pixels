@@ -246,6 +246,64 @@ Commit message: `feat(ops): layer, frame, tag and cel commands`.
 
 ---
 
+## B2: documents and storage (`m1-doc`)
+
+A new crate, `crates/rp-doc`: portable (no `std::fs`), depending on rp-core, rp-io, rp-ops and thiserror. Also an rp-io read option (R7). The tests are in `crates/rp-doc/tests/document.rs` and `crates/rp-io/tests/read_options.rs`.
+
+**API**
+```rust
+// rp-io
+pub struct ReadOptions { pub decode_budget: usize }      // Default: DECODE_BUDGET
+pub fn read_with(bytes: &[u8], opts: &ReadOptions) -> Result<Sprite, AseError>;   // read() == read_with(default)
+
+// rp-doc
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum StorageError { NotFound(String), Io(String) }
+pub trait Storage {
+    fn read(&self, path: &str) -> Result<Vec<u8>, StorageError>;
+    fn write(&mut self, path: &str, bytes: &[u8]) -> Result<(), StorageError>;   // creates parents; replaces whole file
+    fn exists(&self, path: &str) -> Result<bool, StorageError>;
+    fn rename(&mut self, from: &str, to: &str) -> Result<(), StorageError>;
+    fn remove(&mut self, path: &str) -> Result<(), StorageError>;
+    fn list(&self, dir: &str) -> Result<Vec<String>, StorageError>;   // immediate child names; missing dir = empty
+}
+#[derive(Default)] pub struct MemStorage { .. }   // + pub fn fail_writes_to(&mut self, path: &str)  (test hook: writes to that path return Io)
+pub struct DocOptions { pub history_enabled: bool, pub history_keep: usize, pub decode_budget: usize } // Default: true, 10, DECODE_BUDGET
+#[derive(Debug, thiserror::Error)]
+pub enum DocError { Storage(StorageError), Read(AseError), Write(AseError), NoPath, InvalidSize { width: u16, height: u16 } }
+pub struct Document { .. }
+impl Document {
+    pub fn new(width: u16, height: u16, mode: ColorMode) -> Result<Document, DocError>;
+    pub fn open(storage: &dyn Storage, path: &str, opts: &DocOptions) -> Result<Document, DocError>;
+    pub fn save(&mut self, storage: &mut dyn Storage) -> Result<(), DocError>;
+    pub fn save_as(&mut self, storage: &mut dyn Storage, path: &str) -> Result<(), DocError>;
+    pub fn engine(&self) -> &Engine;  pub fn engine_mut(&mut self) -> &mut Engine;
+    pub fn path(&self) -> Option<&str>;  pub fn is_dirty(&self) -> bool;
+    pub fn options(&self) -> &DocOptions;  pub fn set_options(&mut self, opts: DocOptions);
+}
+```
+
+**Behaviour rules**
+1. **`new`**:
+   - One 100 ms frame and one image layer, "Layer 1" (visible, editable, id 0).
+   - An empty palette for RGBA and greyscale. Indexed gets `[0,0,0,255]` and `[255,255,255,255]`, with transparent index 0.
+   - The layer is part of the initial sprite, not an undo step.
+   - Width or height 0 is `InvalidSize`.
+2. **Dirty tracking.** `is_dirty` is true when the current sprite differs from the last saved or opened state. Undoing back to it is clean again. Comparing against a stored copy of the saved sprite is acceptable; the engine's revision is not, because undo raises it.
+3. **Saving.** `save` writes to `path()`, or returns `NoPath` if there is none. `save_as` writes to the new path and adopts it only on success. A failed save changes neither the path nor the dirty state.
+4. **History backups** happen before overwriting an existing file, when `history_enabled` and `history_keep > 0`.
+   - The current bytes are copied to `<dir>/.rusty_pixels/history/<file name>.<n>`.
+   - `n` is 1 more than the highest existing number for that file name.
+   - Afterwards, only the `history_keep` highest-numbered backups of that file are kept.
+   - `<dir>` is the path's parent: empty for a bare name, giving `.rusty_pixels/history/...`.
+   - The path's own separator is used: if it contains `\` and no `/`, use `\`.
+5. **`open`** reads through `rp_io::read_with` with `opts.decode_budget`. A missing file is `Storage(NotFound)`, and a bad file is `Read`. The document keeps the given options and path, and starts clean.
+6. **MemStorage** keys files by their exact path string. A directory exists implicitly when a file path starts with it plus a separator. `list` returns sorted or unsorted unique immediate child names.
+
+Commit message: `feat(doc): documents, storage trait, history backups, decode budget option`.
+
+---
+
 ## Phases B to D (outline, detailed after Phase A merges)
 
 - **B1 commands.** Covers: layer visibility, opacity and blend; add group; move layer; insert, remove and duplicate frame (re-keying cels); add, remove and set tag; clear cel; link cels; set cel opacity; and drawing as commands built on `rp-tools` (line with Bresenham, rectangle, ellipse, flood fill in 4- or 8-connected modes, each with a fill option). Every drawing command produces an ordinary cel change, so undo and conflict keys come free.
